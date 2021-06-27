@@ -9,16 +9,22 @@ serverDir ='$HOME/SKAAP/SKAAPserver/';
 clientDir = pwd;
 
 ssh_conn = ssh2_config(HOSTNAME,USERNAME,PASSWORD);
-command=sprintf('cd %s; python temp_humidity.py',serverDir);
+command=sprintf('cd %s; python3 temp_humidity.py',serverDir);
 ssh_conn = ssh2_command(ssh_conn, command);
-command=sprintf('cd %s; python detect_devices.py',serverDir);
+command=sprintf('cd %s; python3 detect_devices.py',serverDir);
 ssh_conn = ssh2_command(ssh_conn, command);
-command=sprintf('cd %s; python device_info.py',serverDir);
-ssh_conn = ssh2_command(ssh_conn, command,1);
-command=sprintf('cd %s; python get_samples.py -O output.txt',serverDir);
+command=sprintf('cd %s; python3 device_info.py',serverDir);
 ssh_conn = ssh2_command(ssh_conn, command);
-scp_get(ssh_conn,{'output.txt'},clientDir,serverDir);
-samples=readmatrix('output.txt','TrimNonNumeric',1) ;
+% command=sprintf('cd %s; python3 get_samples.py --bins 2048',serverDir);
+% ssh_conn = ssh2_command(ssh_conn, command);
+% scp_get(ssh_conn,'output.txt',clientDir,serverDir);
+% samples=readmatrix('output.txt','delimiter',',') ;
+% figure
+% plot(real(samples),'DisplayName','In-phase'); hold on,
+% plot(imag(samples),'DisplayName', 'Quadrature')
+% title('Raw time samples')
+% 
+ssh_conn = ssh2_close(ssh_conn);
 % fc = 94e06; % Centre frequency
 % N=65536; % Number of samples/bins. Max N=65536
 % gain=15.0; % Total gain
@@ -59,7 +65,7 @@ samples=readmatrix('output.txt','TrimNonNumeric',1) ;
 % grid on 
 % grid minor
 % 
-% ssh_conn = ssh2_close(ssh_conn);
+% 
 
 
 % ssh2_conn = scp_simple_get(HOSTNAME,USERNAME,PASSWORD,'data0.npy','$HOME/SKAAP/');
