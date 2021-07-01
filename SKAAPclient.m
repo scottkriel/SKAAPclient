@@ -4,8 +4,7 @@ classdef SKAAPclient
         % dirStruct
         serverDir(1,:) char      % Directory of the code files on SKAAP
         clientDir(1,:) char    % Directory on client where results are stored 
-        campaignName(1,:) char    % Directory on client where results are stored 
-        campaignPID(1,:) char    % Directory on client where results are stored 
+        campaignDir(1,:) char    % Directory on client where results are stored 
         ssh_struct                % structure containing SSH connection info       
     end
     
@@ -22,65 +21,41 @@ classdef SKAAPclient
     
     methods
         %% Constructor
-        function obj = SKAAPclient(dirStruct)
+        function obj = SKAAPclient()
             if obj.STATE.constructor
                 p = mfilename('fullpath');
                 thisDir = fileparts(p);
-                % Set defaults
-                if nargin < 1
-                    serverDir = '$HOME/SKAAP/SKAAPserver';
-                    clientDir = [thisDir,'\results'];
-                else
-                    if ~isfield(dirStruct,'serverDir') || isempty(dirStruct.serverDir)
-                        serverDir = '$HOME/SKAAP/SKAAPserver';
-                    else
-                        serverDir = dirStruct.serverDir;
-                    end
-                    if ~isfield(dirStruct,'clientDir') || isempty(dirStruct.clientDir)
-                        clientDir = [thisDir,'\results'];
-                    else
-                        clientDir = dirStruct.clientDir;
-                    end
-                end
+                clientDir = thisDir;
+                serverDir = '$HOME/SKAAP/SKAAPserver';
                 obj.serverDir = serverDir;
                 obj.clientDir = clientDir;
+                obj.campaignDir = [obj.clientDir,'\campaign'];
+            end
+        end        
+
+        function obj = init(obj)
+            % Initialize SSH connection and display info
+            obj = obj.open_connection(obj);
+            devices = obj.detect_devices();
+        end
+        
+        function obj = open_connection(obj)
+        % Configure the ssh connection
+            obj.ssh_struct = ssh2_config(obj.hostname,obj.username,obj.password);
+            % Authenticate connection
+            try
+                obj.ssh_struct = ssh2(obj.ssh_struct);
+                if obj.ssh_struct.authenticated
+                    disp(['Connected to: ',obj.username,'@',obj.hostname])
+                end
+            catch
+                error('Error: Could not connect to: "%s@%s"!',...
+                obj.username,obj.hostname);
             end
         end
         
-        function obj = init(obj)
-            % Initialize SSH connection and working directories
-            if obj.STATE.init
-                if isfolder(obj.clientDir)
-                    disp('===============')
-                    disp('WARNING')
-                    disp('---------------')
-                    disp('This will delete ALL the information in the following working directory,')
-                    disp(' ')
-                    disp(obj.clientDir)
-                    disp(' ')
-                    res = input('Do you wish to continue? Y/N: ','s');
-                    
-                    val = true;
-                    while val
-                        if ismember(res,{'Y','y','N','n'})
-                            val = false;
-                            if ismember(res,{'N','n'})
-                                error('RUN STOPPED')
-                            else
-                                wD = obj.clientDir;
-                                rmdir(wD,'s')
-                                pause(2)
-                                mkdir(obj.clientDir)
-                            end
-                        else
-                            disp(' ')
-                            res = input('Enter a valid response (Y or N). Do you wish to continue? Y/N: ','s');
-                        end
-                    end
-                else
-                    mkdir(obj.clientDir)
-                end
-            end
+        function obj = close_connection(obj)
+            obj.ssh_struct = ssh2_close(obj.ssh_struct);
         end
         
         function [temp, humidity] = temp_humidity(obj)
@@ -247,43 +222,6 @@ classdef SKAAPclient
         
         function obj = start_campaign(obj, name, freq, bins, gain, rate, repeats, device_id)
             obj.campaignName = name;
-            if isfolder([obj.clientDir,'\',obj.campaignName])|| isfolder([obj.serverDir,'\',obj.campaignName])
-                disp('===============')
-                disp('WARNING')
-                disp('---------------')
-                disp('This will delete ALL the information in the following directories, ')
-                disp(' ')
-                disp([obj.clientDir,'\',obj.campaignName])
-                disp([obj.serverDir,'\',obj.campaignName])
-                disp(' ')
-                res = input('Do you wish to continue? Y/N: ','s');
-                val = true;
-                while val
-                    if ismember(res,{'Y','y','N','n'})
-                        val = false;
-                        if ismember(res,{'N','n'})
-                            error('RUN STOPPED')
-                        else
-                            wD = [obj.clientDir,'\',obj.campaignName];
-                            rmdir(wD,'s')
-                            pause(2)
-                            mkdir([obj.clientDir,'\',obj.campaignName])
-                            
-                            command = sprintf('cd %s; mkdir %s',obj.serverDir,obj.campaignName);
-                            ssh2_command(obj.ssh_struct, command);
-                            pause(2)
-                        end
-                    else
-                        disp(' ')
-                        res = input('Enter a valid response (Y or N). Do you wish to continue? Y/N: ','s');
-                    end
-                end
-            else
-                mkdir([obj.clientDir,'\',obj.campaignName])
-                command = sprintf('cd %s; mkdir %s',obj.serverDir,obj.campaignName);
-                ssh2_command(obj.ssh_struct, command);
-            end
-
             % Create cell array of keyword arguments we wish to set
             kwargs = {' --freq ',':',' --bins ',' --gain ',' --rate ',' --repeats ',' --device ' ;
                         freq(1), freq(end), bins, gain, rate, repeats, device_id};
@@ -303,8 +241,33 @@ classdef SKAAPclient
         end
         
         function [magMAT, freqMAT] = get_campaign_data(obj)
-            scp_get(obj.ssh_struct,[obj.campaignName,'_output.txt'],[obj.clientDir,'\',obj.campaignName],[obj.serverDir,'/',obj.campaignName]);
-            data=readmatrix([obj.clientDir,'\',obj.campaignName,'\',obj.campaignName,'_output.txt'],'delimiter',' ','CommentStyle','#');
+            if isfolder(obj.campaignDir)
+                    disp('===============')
+                    disp('WARNING')
+                    disp('---------------')
+                    disp('This will replace local data in, ')
+                    disp(' ')
+                    disp(obj.campaignDir)
+                    disp(' ')
+                    disp('with current campaign output on server.')
+                    disp(' ')
+                    res = input('Do you wish to continue? Y/N: ','s');                    
+                    val = true;
+                    while val
+                        if ismember(res,{'Y','y','N','n'})
+                            val = false;
+                            if ismember(res,{'N','n'})
+                                error('RUN STOPPED')
+                            else
+                                scp_get(obj.ssh_struct,[obj.campaignName,'_output.txt'],obj.clientDir,[obj.serverDir,'/',obj.campaignName]);
+                            end
+                        else
+                            disp(' ')
+                            res = input('Enter a valid response (Y or N). Do you wish to continue? Y/N: ','s');
+                        end
+                    end
+                end
+             data=readmatrix([obj.clientDir,'\',obj.campaignName,'\',obj.campaignName,'_output.txt'],'delimiter',' ','CommentStyle','#');
             freqData=data(:,1);
             magData=data(:,2);
             Nf=numel(unique(freqData));
@@ -316,23 +279,6 @@ classdef SKAAPclient
             magMAT=reshape(magData(1:Nf*(nRun-1)),Nf,nRun-1).';
         end
         
-        function obj = open_connection(obj)
-        % Configure the ssh connection
-            obj.ssh_struct = ssh2_config(obj.hostname,obj.username,obj.password);
-            % Authenticate connection
-            try
-                obj.ssh_struct = ssh2(obj.ssh_struct);
-                if obj.ssh_struct.authenticated
-                    disp(['Connected to: ',obj.username,'@',obj.hostname])
-                end
-            catch
-                error('Error: Could not connect to: "%s@%s"!',...
-                obj.username,obj.hostname);
-            end
-        end
         
-        function obj = close_connection(obj)
-            obj.ssh_struct = ssh2_close(obj.ssh_struct);
-        end
     end
 end
