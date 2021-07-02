@@ -3,8 +3,60 @@ clear all
 close all
 % Create instance and initialize
 obj = SKAAPclient();
-obj = obj.open_connection();
-% obj = obj.init();
+obj = obj.init();
+obj.update_campaign();
+[dtimes,freq,magFull,magMax,magMean,magMin] = campaign_data(obj);
+figure 
+plot(freq./1e06,magFull,'LineStyle','none','Marker','.','MarkerSize',1e-12)
+xlabel('Frequency (MHz)')
+ylabel('Magnitude (dB)')
+grid on 
+grid minor
+% 
+figure
+plot(freq./1e06,magMax, 'color','r','DisplayName','Max'); hold on,
+plot(freq./1e06,10*magMean, 'color','g','DisplayName','Mean'); hold on,
+plot(freq./1e06,magMin, 'color','b','DisplayName','Min'); hold on,
+grid on
+grid minor
+xlabel('Frequency (MHz)')
+ylabel('Magnitude (dB)')
+grid on 
+grid minor
+
+freqInterp = linspace(min(freq),max(freq),100);
+dtimesInterp = linspace(dtimes.start(1),dtimes.start(end),250);
+[Xq,Yq] = meshgrid(freqInterp,posixtime(dtimesInterp));
+magInterp = interp2(freq,posixtime(dtimes.start),magFull,Xq,Yq,'spline');
+
+figure
+surf(freq./1e06,dtimes.start,magFull,'FaceColor','interp','EdgeColor','none')
+colormap('jet')
+colorbar
+grid on
+grid minor
+xlabel('Frequency (MHz)')
+ylabel('Time (datetime)')
+
+figure
+surf(freqInterp./1e06,dtimesInterp,magInterp,'FaceColor','interp')
+colormap('jet')
+colorbar
+grid on
+grid minor
+xlabel('Frequency (MHz)')
+ylabel('Time (datetime)')
+
+
+
+
+
+
+
+
+
+
+
 % % Get ambient temperature and humidity inside receiver box
 % [temp, humidity] = obj.temp_humidity();
 % fprintf('Temperature: %.1f Celsius \nHumidity: %.1f%% \n',temp,humidity)
@@ -14,12 +66,12 @@ obj = obj.open_connection();
 % sdr_info = obj.device_info();
 % 
 % Configure measurement parameters
-fc = 94e06; % Centre freq
-N = 65536;  % Number of samples/fft bins
-gain = 15.0; % Total receiver gain
-sampleRate = 10e06;  % Samples per second
-repeats = 1; % Number of spectra to average 
-device_id = 0;
+% fc = 94e06; % Centre freq
+% N = 65536;  % Number of samples/fft bins
+% gain = 15.0; % Total receiver gain
+% sampleRate = 10e06;  % Samples per second
+% repeats = 1; % Number of spectra to average 
+% device_id = 0;
 
 % % Retrieve raw time samples in IQ-format
 % [samples, timeVect] = obj.get_samples(fc, N, gain, sampleRate, repeats, device_id);
@@ -55,12 +107,12 @@ device_id = 0;
 % title('Result from scan_spectrum')
 
 % scan_spectrum allows scanning over the whole freq range 24-1800MHz
-obj.campaignName = 'campaign1';
+% obj.campaignName = 'campaign1';
 % freq_range = [24, 1750].*1e06;
 % bins = 512;
 % obj = obj.start_campaign(campaignName, freq_range, bins, gain, sampleRate, repeats, device_id);
 % 
-[magMAT, freqMAT] = obj.get_campaign_data();
+% [magMAT, freqMAT] = obj.get_campaign_data();
 % 
 % figure 
 % plot(freqMAT(:,1)./1e06,magMAT,'LineStyle','none','Marker','.','MarkerSize',1e-12)

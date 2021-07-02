@@ -22,20 +22,23 @@ classdef SKAAPclient
     methods
         %% Constructor
         function obj = SKAAPclient()
-            if obj.STATE.constructor
-                p = mfilename('fullpath');
-                thisDir = fileparts(p);
-                clientDir = thisDir;
-                serverDir = '$HOME/SKAAP/SKAAPserver';
-                obj.serverDir = serverDir;
-                obj.clientDir = clientDir;
-                obj.campaignDir = [obj.clientDir,'\campaign'];
+            % Handle different path slash character for Windows
+            if ispc
+                slash = '\';
+            else
+                slash = '/';
             end
+            % Setup directory paths
+            p = mfilename('fullpath');
+            thisDir = fileparts(p);
+            obj.clientDir = [thisDir,slash];
+            obj.serverDir = '$HOME/SKAAP/SKAAPserver/';
+            obj.campaignDir = [obj.clientDir,'campaign',slash];            
         end        
 
         function obj = init(obj)
             % Initialize SSH connection and display info
-            obj = obj.open_connection(obj);
+            obj = obj.open_connection();
             devices = obj.detect_devices();
         end
         
@@ -98,13 +101,13 @@ classdef SKAAPclient
             
             % Build command to send over ssh
             command=sprintf('cd %s; python3 get_samples.py --freq %f --bins %d --gain %f --rate %d --repeats %d --device %d --output %s',...
-                            obj.serverDir, fc, N, gain, sampleRate, repeats, device_id, [obj.serverDir,'/samples.txt']);
+                            obj.serverDir, fc, N, gain, sampleRate, repeats, device_id, [obj.serverDir,'samples.txt']);
             % Execute command over ssh
             obj.ssh_struct = ssh2_command(obj.ssh_struct, command);
             % Retrieve the data file
             scp_get(obj.ssh_struct,'samples.txt',obj.clientDir,obj.serverDir);
             % Read the samples from file
-            samples=readmatrix([obj.clientDir,'\samples.txt'],'delimiter',',') ;
+            samples=readmatrix([obj.clientDir,'samples.txt'],'delimiter',',') ;
             % Construct time vector
             timeVec = (0:1:N-1).*(1/sampleRate);
         end
@@ -215,7 +218,7 @@ classdef SKAAPclient
                     obj.serverDir, argStr);
             ssh2_command(obj.ssh_struct, command);
             scp_get(obj.ssh_struct,{'scan_output.txt'},obj.clientDir,obj.serverDir);
-            scan_data=readmatrix([obj.clientDir,'\scan_output.txt'],'delimiter',' ','CommentStyle','#');
+            scan_data=readmatrix([obj.clientDir,'scan_output.txt'],'delimiter',' ','CommentStyle','#');
             freqVec=scan_data(:,1);
             mag=scan_data(:,2);
         end
@@ -240,45 +243,49 @@ classdef SKAAPclient
 %             mag=scan_data(:,2);
         end
         
-        function [magMAT, freqMAT] = get_campaign_data(obj)
-            if isfolder(obj.campaignDir)
-                    disp('===============')
-                    disp('WARNING')
-                    disp('---------------')
-                    disp('This will replace local data in, ')
-                    disp(' ')
-                    disp(obj.campaignDir)
-                    disp(' ')
-                    disp('with current campaign output on server.')
-                    disp(' ')
-                    res = input('Do you wish to continue? Y/N: ','s');                    
-                    val = true;
-                    while val
-                        if ismember(res,{'Y','y','N','n'})
-                            val = false;
-                            if ismember(res,{'N','n'})
-                                error('RUN STOPPED')
-                            else
-                                scp_get(obj.ssh_struct,[obj.campaignName,'_output.txt'],obj.clientDir,[obj.serverDir,'/',obj.campaignName]);
-                            end
-                        else
-                            disp(' ')
-                            res = input('Enter a valid response (Y or N). Do you wish to continue? Y/N: ','s');
-                        end
-                    end
-                end
-             data=readmatrix([obj.clientDir,'\',obj.campaignName,'\',obj.campaignName,'_output.txt'],'delimiter',' ','CommentStyle','#');
-            freqData=data(:,1);
-            magData=data(:,2);
-            Nf=numel(unique(freqData));
-            nRun=floor((numel(freqData)-1)/Nf)+1; %Run we are busy with
-            percComp=(numel(freqData)/Nf-(nRun-1))*1e2;
-            disp([num2str(percComp),'%', ' complete with run ',num2str(nRun)])
-            
-            freqMAT=reshape(freqData(1:Nf*(nRun-1)),Nf,nRun-1);
-            magMAT=reshape(magData(1:Nf*(nRun-1)),Nf,nRun-1).';
+        function dtimes = read_dtimes(obj)
+            T = readtable([obj.campaignDir,'time.txt'],'Format','%s %s');
+            dtimes.start = datetime(T.Var1);
+            dtimes.end = datetime(T.Var2);
         end
         
+        function [dtimes,freq,magFull,magMax,magMean,magMin] = campaign_data(obj)              
+            dtimes = obj.read_dtimes();
+            freq=readmatrix([obj.campaignDir,'freq.txt'],'delimiter',' ','CommentStyle','');
+            magFull=readmatrix([obj.campaignDir,'magFull.txt'],'delimiter',' ','CommentStyle','');
+            magMax=readmatrix([obj.campaignDir,'magMax.txt'],'delimiter',' ','CommentStyle','');
+            magMean=readmatrix([obj.campaignDir,'magMean.txt'],'delimiter',' ','CommentStyle','');
+            magMin=readmatrix([obj.campaignDir,'magMin.txt'],'delimiter',' ','CommentStyle','');
+        end
         
+        function update_campaign(obj)
+            filenames = {'time.txt', 'freq.txt','magFull.txt','magMax.txt','magMean.txt','magMin.txt'};
+            if isfolder(obj.campaignDir)
+                disp('===============')
+                disp('WARNING')
+                disp('---------------')
+                disp('This will replace local data in, ')
+                disp(' ')
+                disp(obj.campaignDir)
+                disp(' ')
+                disp('with current campaign output on server.')
+                disp(' ')
+                res = input('Do you wish to continue? Y/N: ','s');                    
+                val = true;
+                while val
+                    if ismember(res,{'Y','y','N','n'})
+                        val = false;
+                        if ismember(res,{'N','n'})
+                            error('RUN STOPPED')
+                        else
+                            scp_get(obj.ssh_struct,filenames,obj.campaignDir,[obj.serverDir,'campaign']);
+                        end
+                    else
+                        disp(' ')
+                        res = input('Enter a valid response (Y or N). Do you wish to continue? Y/N: ','s');
+                    end
+                end
+            end                                  
+        end                
     end
 end
