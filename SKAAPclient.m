@@ -17,6 +17,7 @@ classdef SKAAPclient
     properties (SetAccess = private)
         % Store the state the object is currently in
         STATE = struct('constructor',1,'init',1); % Default: 1 - run function, 0 - skip function
+        CTRL = struct('run',1,'pause',0,'stop',0);
     end
     
     methods
@@ -230,6 +231,7 @@ classdef SKAAPclient
                         freq(1), freq(end), bins, gain, rate, repeats, device_id};
             argStr = sprintf('%s%d',kwargs{:});
             % Build command to send over ssh
+            % PID20535: nohup python3 -u ./run_campaign.py --freq 24M:1800M --crop 20 --tune-delay 0.2 --continue --quiet & 
             obj.ssh_struct.command=sprintf('cd %s/%s; nohup soapy_power --continue --tune-delay 0.05 --format rtl_power_fftw --output %s_output.txt --crop 20 %s &',...
                     obj.serverDir, name, name, argStr);
 %             ssh2_command(obj.ssh_struct, command);
@@ -244,7 +246,7 @@ classdef SKAAPclient
         end
         
         function dtimes = read_dtimes(obj)
-            T = readtable([obj.campaignDir,'time.txt'],'Format','%s %s');
+            T = readtable([obj.campaignDir,'time.txt'],'Format','%s %s','ReadVariableNames',false);
             dtimes.start = datetime(T.Var1);
             dtimes.end = datetime(T.Var2);
         end
@@ -252,14 +254,15 @@ classdef SKAAPclient
         function [dtimes,freq,magFull,magMax,magMean,magMin] = campaign_data(obj)              
             dtimes = obj.read_dtimes();
             freq=readmatrix([obj.campaignDir,'freq.txt'],'delimiter',' ','CommentStyle','');
-            magFull=readmatrix([obj.campaignDir,'magFull.txt'],'delimiter',' ','CommentStyle','');
             magMax=readmatrix([obj.campaignDir,'magMax.txt'],'delimiter',' ','CommentStyle','');
             magMean=readmatrix([obj.campaignDir,'magMean.txt'],'delimiter',' ','CommentStyle','');
-            magMin=readmatrix([obj.campaignDir,'magMin.txt'],'delimiter',' ','CommentStyle','');
+            magMin=readmatrix([obj.campaignDir,'magMin.txt'],'delimiter',' ','CommentStyle','');         
+            magFull = read_magFull([obj.campaignDir,'magFull.txt']);
+            % magFull=readmatrix([obj.campaignDir,'magFull.txt'],'delimiter',' ','CommentStyle','');                                          
         end
         
         function update_campaign(obj)
-            filenames = {'time.txt', 'freq.txt','magFull.txt','magMax.txt','magMean.txt','magMin.txt'};
+            filenames = {'status.txt','settings.txt','time.txt', 'freq.txt','magFull.txt','magMax.txt','magMean.txt','magMin.txt'};
             if isfolder(obj.campaignDir)
                 disp('===============')
                 disp('WARNING')
