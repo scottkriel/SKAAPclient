@@ -40,7 +40,8 @@ classdef SKAAPclient
         function obj = init(obj)
             % Initialize SSH connection and display info
             obj = obj.open_connection();
-            devices = obj.detect_devices();
+            % We will add code here to check status of any running
+            % campaign...
         end
         
         function obj = open_connection(obj)
