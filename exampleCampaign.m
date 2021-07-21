@@ -55,7 +55,7 @@ obj = SKAAPclient();
 obj = obj.init();
 % Setup campaign properties
 freq_range = [24e06, 1750e06]; % Freq limit of SDR is between 24MHz and 1800MHz
-runs = 0;
+runs = 0;   % Zero here means it will run endlessly
 bins=512;
 gain=15.0;
 rate=10e06;
