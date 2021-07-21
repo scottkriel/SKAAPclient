@@ -23,11 +23,10 @@ function C = read_magFull(fileName)
         end
         Nline = Nline+1;
     end
-    disp(['Read a total of ',num2str(Nline),' lines'])
     fclose(fid);
+    
     % fires when main function terminates
     function cleanUp()
-        disp('Closing file on line: ',num2str(Nline));
         fclose('all');
     end
 end

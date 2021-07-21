@@ -3,8 +3,8 @@ classdef SKAAPclient
     properties
         % dirStruct
         serverDir(1,:) char      % Directory of the code files on SKAAP
-        clientDir(1,:) char    % Directory on client where results are stored 
-        campaignDir(1,:) char    % Directory on client where results are stored 
+        clientDir(1,:) char    % Working Directory of client 
+        campaignDir(1,:) char    % Directory on client where campaign results are stored 
         ssh_struct                % structure containing SSH connection info       
     end
     
@@ -16,14 +16,14 @@ classdef SKAAPclient
     
     properties (SetAccess = private)
         % Store the state the object is currently in
-        STATE = struct('constructor',1,'init',1); % Default: 1 - run function, 0 - skip function
-        CTRL = struct('run',1,'pause',0,'stop',0);
+        STATUS = struct('running',0,'paused',0,'extFlag',NaN,'Nsweep',NaN,'start_time', NaN,'curr_time',NaN,'PID',NaN); 
+        CTRL = struct('run',1,'pause',0,'quit',0);
     end
     
     methods
         %% Constructor
         function obj = SKAAPclient()
-            % Handle different path slash character for Windows
+            % Handle different path slash character for Windows and Unix
             if ispc
                 slash = '\';
             else
@@ -40,8 +40,7 @@ classdef SKAAPclient
         function obj = init(obj)
             % Initialize SSH connection and display info
             obj = obj.open_connection();
-            % We will add code here to check status of any running
-            % campaign...
+            obj.get_status;
         end
         
         function obj = open_connection(obj)
@@ -58,9 +57,51 @@ classdef SKAAPclient
                 obj.username,obj.hostname);
             end
         end
-        
+
         function obj = close_connection(obj)
             obj.ssh_struct = ssh2_close(obj.ssh_struct);
+        end
+        
+        function obj = get_status(obj)
+            % Get server status 
+            command=sprintf('cd %scampaign; echo "$(cat status.txt)"',obj.serverDir);
+            % Execute command over ssh and retrieve response
+            command_result = ssh2_command_response(ssh2_command(obj.ssh_struct, command, 1));  
+            contents = command_result{1};
+            if isempty(contents)
+                disp('Server status file does not exist')
+            else
+                % Decode from json to struct
+                S = jsondecode(contents);
+                 % Convert to python dictionary structure
+                STATUSdict=py.dict(S);
+                % Write to file 
+                fileID = fopen([obj.campaignDir,'status.txt'],'w');
+                fprintf(fileID,'%s\n',STATUSdict);
+                fclose(fileID);
+                % Convert string times to datetime object
+                S.curr_time=datetime(S.curr_time);
+                S.start_time=datetime(S.start_time);
+                obj.STATUS = S;
+               
+                if obj.STATUS.running
+                    if obj.STATUS.paused
+                        disp(['Campaign paused on sweep number ',num2str(obj.STATUS.Nsweep)])
+                    else
+                        disp(['Campaign running sweep number ',num2str(obj.STATUS.Nsweep+1)])
+                    end
+                else
+                    if obj.STATUS.extFlag==-1
+                        disp(['Previous campaign exited with error on sweep number ',num2str(obj.STATUS.Nsweep+1)])
+                    elseif obj.STATUS.extFlag==0
+                        disp(['Previous campaign terminated by user on sweep number ',num2str(obj.STATUS.Nsweep)])
+                    elseif obj.STATUS.extFlag==obj.STATUS.Nsweep
+                        disp(['Previous campaign finished running a total of ',num2str(obj.STATUS.Nsweep),' sweeps'])
+                    else
+                        disp('Unknown termination behaviour')
+                    end
+                end
+            end
         end
         
         function [temp, humidity] = temp_humidity(obj)
@@ -225,25 +266,120 @@ classdef SKAAPclient
             mag=scan_data(:,2);
         end
         
-        function obj = start_campaign(obj, name, freq, bins, gain, rate, repeats, device_id)
-            obj.campaignName = name;
+        function obj = start_campaign(obj, freq, runs, bins, gain, rate, repeats, device_id)
+            % Set control flags
+            obj.CTRL.run = 1;
+            obj.CTRL.pause=0;
+            obj.CTRL.quit=0;
+            % Convert to python dictionary structure
+            CTRLdict=py.dict(obj.CTRL);
+            % Write to file 
+            fileID = fopen([obj.campaignDir,'ctrl.txt'],'w');
+            fprintf(fileID,'%s\n',CTRLdict);
+            fclose(fileID);
+            % Send control file to SKAAP
+            scp_put(obj.ssh_struct, 'ctrl.txt', [obj.serverDir,'campaign'], obj.campaignDir, 'ctrl.txt')
             % Create cell array of keyword arguments we wish to set
             kwargs = {' --freq ',':',' --bins ',' --gain ',' --rate ',' --repeats ',' --device ' ;
                         freq(1), freq(end), bins, gain, rate, repeats, device_id};
             argStr = sprintf('%s%d',kwargs{:});
+            % Handle whether campaign is continous or has a finitite number
+            % of runs
+            if runs==0
+                argStr = [argStr,' --continue'];
+            else
+                argRun = sprintf(' --runs %d',runs);
+                argStr = [argStr, argRun];
+            end
             % Build command to send over ssh
             % PID20535: nohup python3 -u ./run_campaign.py --freq 24M:1800M --crop 20 --tune-delay 0.2 --continue --quiet & 
-            obj.ssh_struct.command=sprintf('cd %s/%s; nohup soapy_power --continue --tune-delay 0.05 --format rtl_power_fftw --output %s_output.txt --crop 20 %s &',...
-                    obj.serverDir, name, name, argStr);
+%             obj.ssh_struct.command=sprintf('cd %s/%s; nohup soapy_power --continue --tune-delay 0.05 --format rtl_power_fftw --output %s_output.txt --crop 20 %s &',...
+%                     obj.serverDir, name, name, argStr);
+            obj.ssh_struct.command=sprintf('cd %s; nohup python3 -u ./run_campaign.py --tune-delay 0.2 --format rtl_power_fftw --crop 20 --quiet %s & > %scampaign/log.out &',...
+                    obj.serverDir, argStr, obj.serverDir);
 %             ssh2_command(obj.ssh_struct, command);
             obj.ssh_struct.command_session  =  obj.ssh_struct.connection.openSession();
             obj.ssh_struct.command_session.execCommand(obj.ssh_struct.command);
-            obj.campaignPID = obj.ssh_struct.command_result{end};
-            disp(['Campaign started: ',obj.campaignName])
-%             scp_get(obj.ssh_struct,{'scan_output.txt'},obj.clientDir,obj.serverDir);
-%             scan_data=readmatrix([obj.clientDir,'\scan_output.txt'],'delimiter',' ','CommentStyle','#');
-%             freqVec=scan_data(:,1);
-%             mag=scan_data(:,2);
+            % Wait 5 seconds and check the status
+            pause(5);
+            obj = obj.get_status;
+            while obj.STATUS.running==0
+                pause(5);
+                obj = obj.get_status;
+            end
+        end
+        
+        function obj = pause_campaign(obj)
+            % Set control flags
+            obj.CTRL.pause=1;
+            % Convert to python dictionary structure
+            CTRLdict=py.dict(obj.CTRL);
+            % Write to file 
+            fileID = fopen([obj.campaignDir,'ctrl.txt'],'w');
+            fprintf(fileID,'%s\n',CTRLdict);
+            fclose(fileID);
+            % Send control file to SKAAP
+            obj.ssh_struct.command=sprintf('cd %scampaign; echo "%s" >ctrl.txt',...
+                    obj.serverDir, CTRLdict);
+            obj.ssh_struct.command_session  =  obj.ssh_struct.connection.openSession();
+            obj.ssh_struct.command_session.execCommand(obj.ssh_struct.command);
+            % Wait 5 seconds and check the status
+            pause(5);
+            obj = obj.get_status;
+            while obj.STATUS.paused==0
+                pause(5);
+                obj = obj.get_status;
+            end
+        end
+        
+        function obj = resume_campaign(obj)
+            % Set control flags
+            obj.CTRL.pause=0;
+            % Convert to python dictionary structure
+            CTRLdict=py.dict(obj.CTRL);
+            % Write to file 
+            fileID = fopen([obj.campaignDir,'ctrl.txt'],'w');
+            fprintf(fileID,'%s\n',CTRLdict);
+            fclose(fileID);
+            % Send control file to SKAAP
+            obj.ssh_struct.command=sprintf('cd %scampaign; echo "%s" >ctrl.txt',...
+                    obj.serverDir, CTRLdict);
+            obj.ssh_struct.command_session  =  obj.ssh_struct.connection.openSession();
+            obj.ssh_struct.command_session.execCommand(obj.ssh_struct.command);
+            % Wait 5 seconds and check the status
+            pause(5);
+            obj = obj.get_status;
+            while obj.STATUS.paused==1
+                pause(5);
+                obj = obj.get_status;
+            end
+        end
+        
+        function obj = stop_campaign(obj)
+%             obj.ssh_struct.command=sprintf('kill -9 %d;', obj.STATUS.PID);
+%             obj.ssh_struct.command_session  =  obj.ssh_struct.connection.openSession();
+%             obj.ssh_struct.command_session.execCommand(obj.ssh_struct.command);
+            % Set control flags
+            obj.CTRL.run=0;
+            obj.CTRL.pause=0;
+            % Convert to python dictionary structure
+            CTRLdict=py.dict(obj.CTRL);
+            % Write to file 
+            fileID = fopen([obj.campaignDir,'ctrl.txt'],'w');
+            fprintf(fileID,'%s\n',CTRLdict);
+            fclose(fileID);
+            % Send control file to SKAAP
+            obj.ssh_struct.command=sprintf('cd %scampaign; echo "%s" >ctrl.txt',...
+                    obj.serverDir, CTRLdict);
+            obj.ssh_struct.command_session  =  obj.ssh_struct.connection.openSession();
+            obj.ssh_struct.command_session.execCommand(obj.ssh_struct.command);
+            % Wait 5 seconds and check the status
+            pause(5);
+            obj = obj.get_status;
+            while obj.STATUS.running==1
+                pause(5);
+                obj = obj.get_status;
+            end
         end
         
         function dtimes = read_dtimes(obj)
@@ -280,7 +416,7 @@ classdef SKAAPclient
                     if ismember(res,{'Y','y','N','n'})
                         val = false;
                         if ismember(res,{'N','n'})
-                            error('RUN STOPPED')
+                            error('UPDATE CANCELLED')
                         else
                             scp_get(obj.ssh_struct,filenames,obj.campaignDir,[obj.serverDir,'campaign']);
                         end
